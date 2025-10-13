@@ -1,0 +1,12 @@
+# Zig build artifacts
+zig-cache/
+zig-out/
+.zig-cache/
+
+# Build outputs
+*.o
+main
+zigzag
+
+# OS files
+.DS_Store

@@ -8,85 +8,108 @@
 
 ## What is ZigZag?
 
-ZigZag is a Zig library that makes cross-encoder reranking fast enough to replace vector databases. It provides optimized batch inference, quantization, and smart scheduling to score hundreds or thousands of candidates in milliseconds instead of seconds.
+ZigZag is a high-performance inference engine for cross-encoder reranking models. It wraps any cross-encoder (like BGE-reranker, MiniLM) and makes it fast enough to rerank 1000+ candidates in real-time, eliminating the need for vector databases.
+
+**What ZigZag does:**
+- Loads quantized cross-encoder models (ONNX, INT8/FP16)
+- Performs optimized batch inference with SIMD and parallelism
+- Scores 1000+ (query, document) pairs in 50-100ms on CPU
+- Provides simple APIs for Zig, Python, and C
 
 **Use ZigZag when:**
-- You want accurate retrieval without vector embeddings
-- You have 100-1000 candidates from BM25/lexical search
-- You need <100ms reranking latency
-- You want to avoid vector database infrastructure
+- You have candidates from BM25/Elasticsearch (100-1000+ docs)
+- Python reranking is too slow for your latency budget
+- You want cross-encoder accuracy without GPU costs
+- You want to skip vector database infrastructure entirely
 
 ## The Problem
 
-Cross-encoders are more accurate than bi-encoders (embeddings), but they're considered "too slow" for first-stage retrieval:
+Cross-encoders are more accurate than bi-encoders (embeddings), but they're considered "too slow" for real-time reranking:
 
 ```python
-# Typical Python reranking
-for doc in candidates:  # 1000 documents
-    score = model(query, doc)  # 0.2ms each
-    # Total: 200ms + Python overhead = 300-400ms
+# Typical Python reranking with sentence-transformers
+from sentence_transformers import CrossEncoder
+
+model = CrossEncoder('BAAI/bge-reranker-base')
+scores = model.predict([(query, doc) for doc in candidates])
+
+# For 1000 documents: 500ms-2s on CPU
+# Most systems only rerank 100 docs due to latency constraints
 ```
 
 **Why it's slow:**
-- Python overhead (50%+ of time)
-- Sequential processing
-- No quantization
-- Inefficient memory layout
+- Python overhead and GIL contention
+- Sequential or poorly batched processing
+- FP32 precision (no quantization)
+- Inefficient memory layout and cache misses
 
 ## The Solution
 
-ZigZag optimizes every part of the inference pipeline:
+ZigZag wraps your cross-encoder model and optimizes every part of the inference pipeline:
 
 ```zig
 // ZigZag reranking
-const scores = try reranker.score_batch(
+var reranker = try zigzag.Reranker.init(.{
+    .model_path = "bge-reranker-v2-m3.onnx",  // Any cross-encoder
+    .quantization = .int8,                     // Q8 quantization
+    .batch_size = 32,
+});
+
+const scores = try reranker.rerank(
     query,
     candidates,  // 1000 documents
-    .{ .use_pruning = true }
+    .{ .top_k = 10 }
 );
-// Total: 50-100ms
+// Total: 50-100ms (5-10x faster than Python)
 ```
 
 **How it's faster:**
-- **Zero Python overhead** - Pure Zig inference
-- **INT8 quantization** - 2-5x faster than FP32
-- **SIMD operations** - Vectorized matrix math
-- **Parallel batching** - Multi-threaded scoring
-- **Smart pruning** - Early exit for low-scoring candidates
-- **Cache-friendly** - Optimized memory layouts
+- **Zero Python overhead** - Pure Zig inference, no GIL
+- **INT8/FP16 quantization** - 2-4x faster than FP32 with minimal accuracy loss
+- **SIMD operations** - Vectorized matrix ops (AVX2/AVX-512)
+- **Parallel batching** - Multi-threaded scoring across CPU cores
+- **Smart pruning** - Early exit for low-scoring candidates (optional)
+- **Cache-friendly** - Optimized memory layouts for L1/L2/L3 caches
 
 ## Architecture
 
-ZigZag is infrastructure, not an application. You integrate it into your retrieval pipeline:
+ZigZag is an inference engine, not a search system. You integrate it into your retrieval pipeline:
 
 ```
 Your Application
     │
-    ├─ Stage 1: Fast candidate retrieval
-    │  └─ BM25, Elasticsearch, or any search system
-    │     Returns: 1000 candidates in ~5ms
+    ├─ Stage 1: Fast candidate retrieval (you provide this)
+    │  └─ BM25 (Elasticsearch, Tantivy, custom implementation)
+    │  └─ OR Sparse embeddings (SPLADE)
+    │  └─ OR Keyword search
+    │     Returns: 1000 candidates in ~5-50ms
     │
     └─ Stage 2: Accurate reranking (ZigZag)
-       └─ Cross-encoder scores all candidates
+       └─ Loads your cross-encoder model (ONNX format)
+       └─ Scores all (query, doc) pairs with optimized inference
           Returns: Top K results in ~50-100ms
 ```
 
+**Key insight:** ZigZag doesn't do retrieval. It makes cross-encoder *reranking* fast enough to replace vector databases entirely.
+
 ## Performance Targets
 
-| Operation | Target | Comparison |
-|-----------|--------|------------|
-| Score 1000 candidates | 50-100ms | Python: 300-400ms |
-| Memory overhead | <100MB | PyTorch: 500MB+ |
-| Throughput | 10K+ docs/sec | Python: 2-3K docs/sec |
+| Operation | ZigZag Target | Python Baseline |
+|-----------|---------------|-----------------|
+| Score 1000 candidates | 50-100ms | 500ms-2s |
+| Memory overhead | <100MB | 500MB+ (PyTorch) |
+| Throughput | 10K+ docs/sec | 500-2K docs/sec |
+| Typical rerank window | 1000+ docs | 100 docs (latency limited) |
 
 ## Use Cases
 
 **What ZigZag enables:**
 
-- **Skip vector databases entirely** - BM25 → ZigZag → Results
-- **Improve existing RAG** - Rerank more candidates faster
-- **Real-time search** - Sub-100ms retrieval at scale
-- **Cost reduction** - CPU inference instead of GPU/vector DB
+- **Skip vector databases entirely** - BM25 → ZigZag reranking → Results
+- **Rerank 10x more candidates** - 1000 docs instead of 100 (better recall)
+- **Real-time search** - Sub-100ms reranking at scale
+- **Cost reduction** - CPU inference, no GPU/vector DB infrastructure
+- **Use any cross-encoder** - Bring your own model (ONNX format)
 
 **Who should use ZigZag:**
 
@@ -258,4 +281,15 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ---
 
-**ZigZag is infrastructure code.** It's the fast reranking engine that makes vector-DB-less retrieval practical. You bring the candidates, we make them fast to score.
+**ZigZag is a reranking inference engine, not a search system.**
+
+You bring:
+- Candidates (from BM25, Elasticsearch, or any retrieval system)
+- A cross-encoder model (in ONNX format)
+
+ZigZag provides:
+- 5-10x faster inference than Python
+- Ability to rerank 1000+ docs in real-time
+- Simple APIs for Zig, Python, and C
+
+This makes vector-DB-less retrieval practical for production systems.

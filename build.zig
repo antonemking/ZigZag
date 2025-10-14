@@ -11,6 +11,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // Link ONNX Runtime
+    exe.linkSystemLibrary("onnxruntime");
+    exe.linkLibC();
+    exe.addIncludePath(.{ .cwd_relative = "/opt/homebrew/Cellar/onnxruntime/1.22.2_4/include" });
+    exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/onnxruntime/1.22.2_4/lib" });
+
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -25,6 +31,12 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+
+    // Link ONNX Runtime for tests too
+    unit_tests.linkSystemLibrary("onnxruntime");
+    unit_tests.linkLibC();
+    unit_tests.addIncludePath(.{ .cwd_relative = "/opt/homebrew/Cellar/onnxruntime/1.22.2_4/include" });
+    unit_tests.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/onnxruntime/1.22.2_4/lib" });
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");

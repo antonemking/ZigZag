@@ -1,5 +1,9 @@
 const std = @import("std");
-// ONNX Runtime C API will be imported once library is linked in build.zig
+
+// ONNX Runtime C API bindings
+const c = @cImport({
+    @cInclude("onnxruntime/onnxruntime_c_api.h");
+});
 
 pub const ONNXError = error{
     InitializationFailed,

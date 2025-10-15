@@ -81,9 +81,10 @@ if [ ! -f "$ONNX_INCLUDE/onnxruntime_c_api.h" ]; then
 fi
 echo "Found headers in: $ONNX_INCLUDE"
 
-# 7. Create symlink for versioned library
-if [ -f "$ONNX_LIB/libonnxruntime.so.1.23.0" ] && [ ! -f "$ONNX_LIB/libonnxruntime.so" ]; then
-    echo "Creating symlink: libonnxruntime.so -> libonnxruntime.so.1.23.0"
+# 7. Create symlinks for versioned library
+if [ -f "$ONNX_LIB/libonnxruntime.so.1.23.0" ]; then
+    echo "Creating symlinks for libonnxruntime..."
+    ln -sf libonnxruntime.so.1.23.0 "$ONNX_LIB/libonnxruntime.so.1"
     ln -sf libonnxruntime.so.1.23.0 "$ONNX_LIB/libonnxruntime.so"
 fi
 

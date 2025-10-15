@@ -81,7 +81,13 @@ if [ ! -f "$ONNX_INCLUDE/onnxruntime_c_api.h" ]; then
 fi
 echo "Found headers in: $ONNX_INCLUDE"
 
-# 7. Set environment variables
+# 7. Create symlink for versioned library
+if [ -f "$ONNX_LIB/libonnxruntime.so.1.23.0" ] && [ ! -f "$ONNX_LIB/libonnxruntime.so" ]; then
+    echo "Creating symlink: libonnxruntime.so -> libonnxruntime.so.1.23.0"
+    ln -sf libonnxruntime.so.1.23.0 "$ONNX_LIB/libonnxruntime.so"
+fi
+
+# 8. Set environment variables
 export ONNX_INCLUDE="$ONNX_INCLUDE"
 export ONNX_LIB="$ONNX_LIB"
 export LD_LIBRARY_PATH="$ONNX_LIB:$LD_LIBRARY_PATH"
@@ -95,7 +101,7 @@ echo "  ONNX_LIB=$ONNX_LIB"
 echo "  USE_GPU=1"
 echo "  COLAB_GPU=1"
 
-# 8. Save environment to file for future sessions
+# 9. Save environment to file for future sessions
 cat > /tmp/zigzag_env.sh << EOF
 export ONNX_INCLUDE="$ONNX_INCLUDE"
 export ONNX_LIB="$ONNX_LIB"

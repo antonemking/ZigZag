@@ -22,7 +22,12 @@ pub fn build(b: *std.Build) void {
 
     if (onnx_include) |include_path| {
         defer b.allocator.free(include_path);
+        // Include both base path and onnxruntime subdirectory
         exe.addIncludePath(.{ .cwd_relative = include_path });
+        // Try adding /onnxruntime subdir if it exists (for downloaded headers)
+        const subdir = std.fmt.allocPrint(b.allocator, "{s}/onnxruntime", .{include_path}) catch include_path;
+        defer if (subdir.ptr != include_path.ptr) b.allocator.free(subdir);
+        exe.addIncludePath(.{ .cwd_relative = subdir });
     } else {
         // Default: Mac Homebrew
         exe.addIncludePath(.{ .cwd_relative = "/opt/homebrew/Cellar/onnxruntime/1.22.2_4/include" });
@@ -61,6 +66,9 @@ pub fn build(b: *std.Build) void {
     if (test_onnx_include) |include_path| {
         defer b.allocator.free(include_path);
         unit_tests.addIncludePath(.{ .cwd_relative = include_path });
+        const subdir = std.fmt.allocPrint(b.allocator, "{s}/onnxruntime", .{include_path}) catch include_path;
+        defer if (subdir.ptr != include_path.ptr) b.allocator.free(subdir);
+        unit_tests.addIncludePath(.{ .cwd_relative = subdir });
     } else {
         // Default: Mac Homebrew
         unit_tests.addIncludePath(.{ .cwd_relative = "/opt/homebrew/Cellar/onnxruntime/1.22.2_4/include" });

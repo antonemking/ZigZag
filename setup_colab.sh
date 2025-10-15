@@ -27,40 +27,44 @@ zig version
 echo "Installing ONNX Runtime GPU..."
 pip install -q onnxruntime-gpu
 
+# 3b. Download C API headers (not included in pip package)
+echo "Downloading ONNX Runtime C headers..."
+ONNX_VERSION=$(python3 -c "import onnxruntime as ort; print(ort.__version__)")
+echo "ONNX Runtime version: $ONNX_VERSION"
+
+mkdir -p /tmp/onnxruntime_headers
+cd /tmp/onnxruntime_headers
+wget -q "https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/onnxruntime-linux-x64-${ONNX_VERSION}.tgz"
+tar -xzf "onnxruntime-linux-x64-${ONNX_VERSION}.tgz"
+HEADER_DIR="/tmp/onnxruntime_headers/onnxruntime-linux-x64-${ONNX_VERSION}/include"
+
+if [ ! -d "$HEADER_DIR" ]; then
+    echo "ERROR: Failed to download headers"
+    exit 1
+fi
+
+cd -
+
 # 4. Find ONNX Runtime paths
 echo "Locating ONNX Runtime..."
 ONNX_PATH=$(python3 -c "import onnxruntime as ort; import os; print(os.path.dirname(ort.__file__))")
 echo "ONNX Runtime path: $ONNX_PATH"
 
-# Try different possible structures
-ONNX_INCLUDE=""
-ONNX_LIB=""
+# Set paths: use downloaded headers + pip library
+ONNX_INCLUDE="$HEADER_DIR"
+ONNX_LIB="$ONNX_PATH/capi"
 
-# Try capi structure (older versions)
-if [ -d "$ONNX_PATH/capi/include" ]; then
-    ONNX_INCLUDE="$ONNX_PATH/capi/include"
-    ONNX_LIB="$ONNX_PATH/capi/lib"
-# Try include directory at root (newer versions)
-elif [ -d "$ONNX_PATH/include" ]; then
-    ONNX_INCLUDE="$ONNX_PATH/include"
-    ONNX_LIB="$ONNX_PATH"
-else
-    echo "ERROR: Could not find ONNX Runtime include directory"
-    echo "Available directories:"
-    ls -la "$ONNX_PATH/" || true
-    exit 1
+# Verify library exists
+LIBONNX="$ONNX_LIB/libonnxruntime.so.1.23.0"
+if [ ! -f "$LIBONNX" ]; then
+    # Try to find it
+    LIBONNX=$(find "$ONNX_PATH" -name "libonnxruntime.so*" 2>/dev/null | head -1)
+    if [ -z "$LIBONNX" ]; then
+        echo "ERROR: libonnxruntime.so not found"
+        exit 1
+    fi
+    ONNX_LIB=$(dirname "$LIBONNX")
 fi
-
-# Find libonnxruntime.so
-LIBONNX=$(find "$ONNX_PATH" -name "libonnxruntime.so*" -o -name "onnxruntime.dll" 2>/dev/null | head -1)
-if [ -z "$LIBONNX" ]; then
-    echo "ERROR: libonnxruntime.so not found"
-    echo "Searching in: $ONNX_PATH"
-    find "$ONNX_PATH" -type f -name "*.so*" 2>/dev/null || true
-    exit 1
-fi
-
-ONNX_LIB=$(dirname "$LIBONNX")
 echo "Found library: $LIBONNX"
 
 # 5. Verify CUDA provider
@@ -69,12 +73,13 @@ python3 -c "import onnxruntime as ort; providers = ort.get_available_providers()
 
 # 6. Verify include headers exist
 echo "Verifying include files..."
-if [ ! -f "$ONNX_INCLUDE/onnxruntime_c_api.h" ]; then
+if [ ! -f "$ONNX_INCLUDE/onnxruntime/onnxruntime_c_api.h" ]; then
     echo "ERROR: onnxruntime_c_api.h not found in $ONNX_INCLUDE"
     echo "Contents of $ONNX_INCLUDE:"
     ls -la "$ONNX_INCLUDE" || true
     exit 1
 fi
+echo "Found headers: $ONNX_INCLUDE/onnxruntime/"
 
 # 7. Set environment variables
 export ONNX_INCLUDE="$ONNX_INCLUDE"

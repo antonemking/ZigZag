@@ -67,13 +67,9 @@ pub const ONNXSession = struct {
                 // Attempt to append CUDA execution provider
                 status = api.*.SessionOptionsAppendExecutionProvider_CUDA_V2.?(session_options, null);
                 if (status != null) {
-                    // Get error message if possible
-                    const error_msg = if (api.*.GetErrorMessage) |getMsg| getMsg.?(status) else null;
-                    if (error_msg) |msg| {
-                        std.debug.print("CUDA initialization failed: {s}\n", .{msg});
-                    } else {
-                        std.debug.print("CUDA initialization failed (no error message)\n", .{});
-                    }
+                    // Get error message
+                    const error_msg = api.*.GetErrorMessage.?(status);
+                    std.debug.print("CUDA initialization failed: {s}\n", .{error_msg});
                     api.*.ReleaseStatus.?(status);
                     std.debug.print("Falling back to CPU execution\n", .{});
                 } else {

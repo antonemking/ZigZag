@@ -2,7 +2,7 @@ const std = @import("std");
 
 // ONNX Runtime C API bindings
 const c = @cImport({
-    @cInclude("onnxruntime/onnxruntime_c_api.h");
+    @cInclude("onnxruntime_c_api.h");
 });
 
 pub const ONNXError = error{

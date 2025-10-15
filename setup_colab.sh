@@ -27,32 +27,45 @@ zig version
 echo "Installing ONNX Runtime GPU..."
 pip install -q onnxruntime-gpu
 
-# 3b. Download C API headers (not included in pip package)
-echo "Downloading ONNX Runtime C headers..."
-ONNX_VERSION=$(python3 -c "import onnxruntime as ort; print(ort.__version__)")
-echo "ONNX Runtime version: $ONNX_VERSION"
-
-mkdir -p /tmp/onnxruntime_headers
-cd /tmp/onnxruntime_headers
-wget -q "https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/onnxruntime-linux-x64-${ONNX_VERSION}.tgz"
-tar -xzf "onnxruntime-linux-x64-${ONNX_VERSION}.tgz"
-HEADER_DIR="/tmp/onnxruntime_headers/onnxruntime-linux-x64-${ONNX_VERSION}/include"
-
-if [ ! -d "$HEADER_DIR" ]; then
-    echo "ERROR: Failed to download headers"
-    exit 1
-fi
-
-cd -
-
-# 4. Find ONNX Runtime paths
+# 4. Find ONNX Runtime paths and extract headers from wheel
 echo "Locating ONNX Runtime..."
+ONNX_VERSION=$(python3 -c "import onnxruntime as ort; print(ort.__version__)")
 ONNX_PATH=$(python3 -c "import onnxruntime as ort; import os; print(os.path.dirname(ort.__file__))")
+echo "ONNX Runtime version: $ONNX_VERSION"
 echo "ONNX Runtime path: $ONNX_PATH"
 
-# Set paths: use downloaded headers + pip library
-ONNX_INCLUDE="$HEADER_DIR"
+# Try to find headers in the pip wheel itself (not GitHub downloads)
+# This ensures compile-time headers match runtime library exactly
 ONNX_LIB="$ONNX_PATH/capi"
+HEADER_DIR=""
+
+# Check common header locations in the wheel
+if [ -d "$ONNX_PATH/capi/include" ]; then
+    HEADER_DIR="$ONNX_PATH/capi/include"
+    echo "Found headers in wheel: $HEADER_DIR"
+elif [ -d "$ONNX_PATH/include" ]; then
+    HEADER_DIR="$ONNX_PATH/include"
+    echo "Found headers in wheel: $HEADER_DIR"
+else
+    # Headers not in wheel - need to download matching version from GitHub
+    # This is a fallback, but creates ABI mismatch risk
+    echo "WARNING: Headers not found in wheel, downloading from GitHub..."
+    echo "This may cause ABI mismatch issues. Consider building from source."
+
+    mkdir -p /tmp/onnxruntime_headers
+    cd /tmp/onnxruntime_headers
+    wget -q "https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/onnxruntime-linux-x64-${ONNX_VERSION}.tgz"
+    tar -xzf "onnxruntime-linux-x64-${ONNX_VERSION}.tgz"
+    HEADER_DIR="/tmp/onnxruntime_headers/onnxruntime-linux-x64-${ONNX_VERSION}/include"
+
+    if [ ! -d "$HEADER_DIR" ]; then
+        echo "ERROR: Failed to download headers"
+        exit 1
+    fi
+    cd -
+fi
+
+ONNX_INCLUDE="$HEADER_DIR"
 
 # Verify library exists
 LIBONNX="$ONNX_LIB/libonnxruntime.so.1.23.0"

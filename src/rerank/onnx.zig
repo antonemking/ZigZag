@@ -56,14 +56,43 @@ pub const ONNXSession = struct {
 
         // Try to enable CUDA execution provider for GPU acceleration
         // Set USE_GPU=1 environment variable to enable GPU
-        // NOTE: CUDA provider is currently unstable and causes segfaults on some systems
-        // Keeping GPU code disabled for now - CPU inference works reliably
+        // Uses V2 provider API to let ONNX Runtime own the provider structs (avoids ABI mismatch)
         const use_gpu = std.process.hasEnvVarConstant("USE_GPU");
         if (use_gpu) {
-            std.debug.print("GPU requested but currently disabled due to CUDA provider instability\n", .{});
-            std.debug.print("Using CPU execution (stable and working)\n", .{});
-            // TODO: Re-enable when CUDA provider issues are resolved
-            // See: https://github.com/microsoft/onnxruntime/issues
+            std.debug.print("Attempting to enable CUDA GPU...\n", .{});
+
+            // Create CUDA provider options - library allocates and owns this struct
+            var cuda_options: ?*c.OrtCUDAProviderOptionsV2 = null;
+            status = api.*.CreateCUDAProviderOptions.?(&cuda_options);
+
+            if (status == null and cuda_options != null) {
+                // Successfully created CUDA options
+                // Append CUDA provider to session (V2 API - safer than V1)
+                status = api.*.SessionOptionsAppendExecutionProvider_CUDA_V2.?(session_options, cuda_options);
+
+                if (status == null) {
+                    std.debug.print("✅ CUDA GPU acceleration enabled\n", .{});
+                } else {
+                    // CUDA append failed, fall back to CPU
+                    const error_msg = api.*.GetErrorMessage.?(status);
+                    std.debug.print("CUDA provider append failed: {s}\n", .{error_msg});
+                    std.debug.print("Falling back to CPU execution\n", .{});
+                    api.*.ReleaseStatus.?(status);
+                    status = null; // Reset for continued execution
+                }
+
+                // Release CUDA options (whether success or failure)
+                api.*.ReleaseCUDAProviderOptions.?(cuda_options);
+            } else {
+                // Failed to create CUDA options
+                if (status != null) {
+                    const error_msg = api.*.GetErrorMessage.?(status);
+                    std.debug.print("Failed to create CUDA options: {s}\n", .{error_msg});
+                    api.*.ReleaseStatus.?(status);
+                    status = null; // Reset for continued execution
+                }
+                std.debug.print("Falling back to CPU execution\n", .{});
+            }
         } else {
             std.debug.print("Using CPU execution (set USE_GPU=1 for GPU)\n", .{});
         }

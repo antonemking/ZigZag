@@ -56,26 +56,14 @@ pub const ONNXSession = struct {
 
         // Try to enable CUDA execution provider for GPU acceleration
         // Set USE_GPU=1 environment variable to enable GPU
+        // NOTE: CUDA provider is currently unstable and causes segfaults on some systems
+        // Keeping GPU code disabled for now - CPU inference works reliably
         const use_gpu = std.process.hasEnvVarConstant("USE_GPU");
         if (use_gpu) {
-            std.debug.print("Attempting to enable CUDA GPU...\n", .{});
-
-            // Check if CUDA provider function exists
-            if (api.*.SessionOptionsAppendExecutionProvider_CUDA_V2 == null) {
-                std.debug.print("CUDA provider not available in this build, using CPU\n", .{});
-            } else {
-                // Attempt to append CUDA execution provider
-                status = api.*.SessionOptionsAppendExecutionProvider_CUDA_V2.?(session_options, null);
-                if (status != null) {
-                    // Get error message
-                    const error_msg = api.*.GetErrorMessage.?(status);
-                    std.debug.print("CUDA initialization failed: {s}\n", .{error_msg});
-                    api.*.ReleaseStatus.?(status);
-                    std.debug.print("Falling back to CPU execution\n", .{});
-                } else {
-                    std.debug.print("✅ Using CUDA GPU acceleration\n", .{});
-                }
-            }
+            std.debug.print("GPU requested but currently disabled due to CUDA provider instability\n", .{});
+            std.debug.print("Using CPU execution (stable and working)\n", .{});
+            // TODO: Re-enable when CUDA provider issues are resolved
+            // See: https://github.com/microsoft/onnxruntime/issues
         } else {
             std.debug.print("Using CPU execution (set USE_GPU=1 for GPU)\n", .{});
         }

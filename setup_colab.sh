@@ -73,13 +73,13 @@ python3 -c "import onnxruntime as ort; providers = ort.get_available_providers()
 
 # 6. Verify include headers exist
 echo "Verifying include files..."
-if [ ! -f "$ONNX_INCLUDE/onnxruntime/onnxruntime_c_api.h" ]; then
+if [ ! -f "$ONNX_INCLUDE/onnxruntime_c_api.h" ]; then
     echo "ERROR: onnxruntime_c_api.h not found in $ONNX_INCLUDE"
     echo "Contents of $ONNX_INCLUDE:"
     ls -la "$ONNX_INCLUDE" || true
     exit 1
 fi
-echo "Found headers: $ONNX_INCLUDE/onnxruntime/"
+echo "Found headers in: $ONNX_INCLUDE"
 
 # 7. Set environment variables
 export ONNX_INCLUDE="$ONNX_INCLUDE"

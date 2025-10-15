@@ -54,7 +54,22 @@ pub const ONNXSession = struct {
             api.*.ReleaseStatus.?(status);
         }
 
-        // Set thread count for parallel execution (use all available cores)
+        // Try to enable CUDA execution provider for GPU acceleration
+        // Set USE_GPU=1 environment variable to enable GPU
+        const use_gpu = std.process.hasEnvVarConstant("USE_GPU");
+        if (use_gpu) {
+            // Attempt to append CUDA execution provider
+            // This requires onnxruntime-gpu package to be installed
+            status = api.*.SessionOptionsAppendExecutionProvider_CUDA_V2.?(session_options, null);
+            if (status != null) {
+                api.*.ReleaseStatus.?(status);
+                std.debug.print("Warning: CUDA GPU not available, falling back to CPU\n", .{});
+            } else {
+                std.debug.print("Using CUDA GPU acceleration\n", .{});
+            }
+        }
+
+        // Set CPU threading options (always set, used if GPU not available)
         status = api.*.SetIntraOpNumThreads.?(session_options, 0); // 0 = use all cores
         if (status != null) {
             api.*.ReleaseStatus.?(status);

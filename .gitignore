@@ -8,5 +8,13 @@ zig-out/
 main
 zigzag
 
+# Model files (too large for git)
+models/*.onnx
+models/*.safetensors
+models/*.bin
+
+# Tokenizer testing scripts (not part of main repo)
+tokenizer_example/
+
 # OS files
 .DS_Store

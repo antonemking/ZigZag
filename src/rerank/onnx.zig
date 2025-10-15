@@ -13,36 +13,71 @@ pub const ONNXError = error{
     OnnxRuntimeNotFound,
 };
 
-// This is a stub - wrapping the real ONNX Runtime C API later
+// ONNX Runtime session wrapping a loaded model
 pub const ONNXSession = struct {
-    model_path: []const u8,
+    env: ?*c.OrtEnv,
+    session: ?*c.OrtSession,
     allocator: std.mem.Allocator,
-    // env: *c.OrtEnv,          // ONNX environment handle
-    // session: *c.OrtSession,  // Loaded model session
+    api: ?*const c.OrtApi,
 
     // Load a cross-encoder model from disk
-    // model_path: path to .onnx file (e.g., "models/bge-reranker-v2.onnx")
+    // model_path: path to .onnx file (e.g., "models/minilm.onnx")
     pub fn init(allocator: std.mem.Allocator, model_path: []const u8) !ONNXSession {
-        // When we wire up ONNX Runtime:
-        // 1. Create OrtEnv (ONNX environment)
-        // 2. Set SessionOptions (threads, optimization level)
-        // 3. Load the .onnx model file
-        // 4. Create InferenceSession for running the model
+        // Get the ONNX Runtime C API
+        const api_base = c.OrtGetApiBase();
+        if (api_base == null) return ONNXError.OnnxRuntimeNotFound;
 
-        // For now just store the path so tests pass
-        const path_copy = try allocator.dupe(u8, model_path);
+        const api = api_base.*.GetApi.?(c.ORT_API_VERSION);
+        if (api == null) return ONNXError.OnnxRuntimeNotFound;
+
+        // Create ONNX environment
+        var env: ?*c.OrtEnv = null;
+        var status = api.*.CreateEnv.?(c.ORT_LOGGING_LEVEL_WARNING, "ZigZag", &env);
+        if (status != null) {
+            api.*.ReleaseStatus.?(status);
+            return ONNXError.InitializationFailed;
+        }
+
+        // Create session options
+        var session_options: ?*c.OrtSessionOptions = null;
+        status = api.*.CreateSessionOptions.?(&session_options);
+        if (status != null) {
+            api.*.ReleaseStatus.?(status);
+            api.*.ReleaseEnv.?(env);
+            return ONNXError.InitializationFailed;
+        }
+        defer api.*.ReleaseSessionOptions.?(session_options);
+
+        // Convert path to null-terminated for C API
+        const path_z = try allocator.dupeZ(u8, model_path);
+        defer allocator.free(path_z);
+
+        // Load the model
+        var session: ?*c.OrtSession = null;
+        status = api.*.CreateSession.?(env, path_z.ptr, session_options, &session);
+        if (status != null) {
+            api.*.ReleaseStatus.?(status);
+            api.*.ReleaseEnv.?(env);
+            return ONNXError.SessionCreationFailed;
+        }
 
         return ONNXSession{
-            .model_path = path_copy,
+            .env = env,
+            .session = session,
             .allocator = allocator,
+            .api = api,
         };
     }
 
     pub fn deinit(self: *ONNXSession) void {
-        // Will release ONNX session and environment when implemented
-        // c.OrtReleaseSession(self.session);
-        // c.OrtReleaseEnv(self.env);
-        self.allocator.free(self.model_path);
+        if (self.api) |api| {
+            if (self.session) |session| {
+                api.ReleaseSession.?(session);
+            }
+            if (self.env) |env| {
+                api.ReleaseEnv.?(env);
+            }
+        }
     }
 
     // Score a single (query, document) pair
@@ -54,18 +89,122 @@ pub const ONNXSession = struct {
         input_ids: []const i64,
         attention_mask: []const i64,
     ) !f32 {
-        _ = self;
-        _ = input_ids;
-        _ = attention_mask;
+        // Create token_type_ids (all zeros for single-sequence input)
+        const token_type_ids = try self.allocator.alloc(i64, input_ids.len);
+        defer self.allocator.free(token_type_ids);
+        @memset(token_type_ids, 0);
 
-        // Real implementation:
-        // 1. Pack input_ids and attention_mask into ONNX tensors
-        // 2. Run the model (forward pass)
-        // 3. Extract the output logits
-        // 4. Convert to final score (sigmoid/softmax depending on model)
+        return self.inferWithTokenTypes(input_ids, attention_mask, token_type_ids);
+    }
 
-        // Stub returns 0.0 for now
-        return 0.0;
+    // Internal inference with token_type_ids
+    fn inferWithTokenTypes(
+        self: *ONNXSession,
+        input_ids: []const i64,
+        attention_mask: []const i64,
+        token_type_ids: []const i64,
+    ) !f32 {
+        const api = self.api orelse return ONNXError.OnnxRuntimeNotFound;
+
+        if (input_ids.len != attention_mask.len) return ONNXError.InvalidInput;
+        const seq_len = input_ids.len;
+
+        // Create memory info for CPU
+        var memory_info: ?*c.OrtMemoryInfo = null;
+        var status = api.CreateCpuMemoryInfo.?(c.OrtArenaAllocator, c.OrtMemTypeDefault, &memory_info);
+        if (status != null) {
+            api.ReleaseStatus.?(status);
+            return ONNXError.InferenceFailed;
+        }
+        defer api.ReleaseMemoryInfo.?(memory_info);
+
+        // Create input tensors - shape is [1, seq_len] (batch_size=1)
+        const input_shape = [_]i64{ 1, @intCast(seq_len) };
+
+        // Create input_ids tensor
+        var input_ids_tensor: ?*c.OrtValue = null;
+        status = api.CreateTensorWithDataAsOrtValue.?(
+            memory_info,
+            @constCast(input_ids.ptr),
+            input_ids.len * @sizeOf(i64),
+            &input_shape,
+            input_shape.len,
+            c.ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64,
+            &input_ids_tensor,
+        );
+        if (status != null) {
+            api.ReleaseStatus.?(status);
+            return ONNXError.InferenceFailed;
+        }
+        defer api.ReleaseValue.?(input_ids_tensor);
+
+        // Create attention_mask tensor
+        var attention_mask_tensor: ?*c.OrtValue = null;
+        status = api.CreateTensorWithDataAsOrtValue.?(
+            memory_info,
+            @constCast(attention_mask.ptr),
+            attention_mask.len * @sizeOf(i64),
+            &input_shape,
+            input_shape.len,
+            c.ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64,
+            &attention_mask_tensor,
+        );
+        if (status != null) {
+            api.ReleaseStatus.?(status);
+            return ONNXError.InferenceFailed;
+        }
+        defer api.ReleaseValue.?(attention_mask_tensor);
+
+        // Create token_type_ids tensor
+        var token_type_ids_tensor: ?*c.OrtValue = null;
+        status = api.CreateTensorWithDataAsOrtValue.?(
+            memory_info,
+            @constCast(token_type_ids.ptr),
+            token_type_ids.len * @sizeOf(i64),
+            &input_shape,
+            input_shape.len,
+            c.ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64,
+            &token_type_ids_tensor,
+        );
+        if (status != null) {
+            api.ReleaseStatus.?(status);
+            return ONNXError.InferenceFailed;
+        }
+        defer api.ReleaseValue.?(token_type_ids_tensor);
+
+        // Run inference with all three inputs
+        const input_names = [_][*c]const u8{ "input_ids", "attention_mask", "token_type_ids" };
+        const inputs = [_]?*c.OrtValue{ input_ids_tensor, attention_mask_tensor, token_type_ids_tensor };
+        const output_names = [_][*c]const u8{"logits"};
+        var outputs: [1]?*c.OrtValue = [_]?*c.OrtValue{null};
+
+        status = api.Run.?(
+            self.session,
+            null, // run options
+            &input_names,
+            &inputs,
+            inputs.len,
+            &output_names,
+            output_names.len,
+            &outputs,
+        );
+        if (status != null) {
+            api.ReleaseStatus.?(status);
+            return ONNXError.InferenceFailed;
+        }
+        defer if (outputs[0]) |output| api.ReleaseValue.?(output);
+
+        // Extract the output score
+        var output_data: ?*anyopaque = null;
+        status = api.GetTensorMutableData.?(outputs[0], &output_data);
+        if (status != null) {
+            api.ReleaseStatus.?(status);
+            return ONNXError.InferenceFailed;
+        }
+
+        // Output is a single float (cross-encoder score)
+        const score_ptr: [*]f32 = @ptrCast(@alignCast(output_data));
+        return score_ptr[0];
     }
 
     // Score multiple (query, doc) pairs at once - this is the fast path
@@ -91,27 +230,156 @@ pub const ONNXSession = struct {
     }
 };
 
-test "ONNX session initialization" {
+test "Load real MiniLM model" {
     const allocator = std.testing.allocator;
 
-    var session = try ONNXSession.init(allocator, "models/test-model.onnx");
+    // Load the actual downloaded model
+    var session = try ONNXSession.init(allocator, "models/minilm.onnx");
     defer session.deinit();
 
-    try std.testing.expectEqualStrings("models/test-model.onnx", session.model_path);
+    // Verify session and env were created
+    try std.testing.expect(session.session != null);
+    try std.testing.expect(session.env != null);
+    try std.testing.expect(session.api != null);
 }
 
-test "ONNX inference stub" {
+test "ONNX real inference" {
     const allocator = std.testing.allocator;
 
-    var session = try ONNXSession.init(allocator, "models/test-model.onnx");
+    var session = try ONNXSession.init(allocator, "models/minilm.onnx");
     defer session.deinit();
 
-    // Fake tokenized input (BERT-style token IDs)
+    // Real tokenized input (BERT-style token IDs)
     const input_ids = [_]i64{ 101, 2023, 2003, 1037, 3231, 102 };
     const attention_mask = [_]i64{ 1, 1, 1, 1, 1, 1 };
 
     const score = try session.infer(&input_ids, &attention_mask);
 
-    // Stub returns 0.0 until we implement real inference
-    try std.testing.expect(score == 0.0);
+    // Real inference should return a valid score (not necessarily 0.0)
+    // Cross-encoder scores are typically floats
+    std.debug.print("\nGot cross-encoder score: {d}\n", .{score});
+    try std.testing.expect(!std.math.isNan(score));
+}
+
+test "ONNX inference with padded sequences" {
+    const allocator = std.testing.allocator;
+
+    var session = try ONNXSession.init(allocator, "models/minilm.onnx");
+    defer session.deinit();
+
+    // First test pair from test_data.json: "how to make pasta" + "Pasta recipe: Boil water, add salt..."
+    // This should score high (relevant match)
+    const relevant_input_ids = [_]i64{
+        101,  2129, 2000, 2191, 24857, 102,  24857, 17974, 1024, 26077, 2300, 1010, 5587, 5474, 1012, 1012,
+        1012, 102,  0,    0,    0,     0,    0,     0,     0,    0,     0,    0,    0,    0,    0,    0,
+        0,    0,    0,    0,    0,     0,    0,     0,     0,    0,     0,    0,    0,    0,    0,    0,
+        0,    0,    0,    0,    0,     0,    0,     0,     0,    0,     0,    0,    0,    0,    0,    0,
+        0,    0,    0,    0,    0,     0,    0,     0,     0,    0,     0,    0,    0,    0,    0,    0,
+        0,    0,    0,    0,    0,     0,    0,     0,     0,    0,     0,    0,    0,    0,    0,    0,
+        0,    0,    0,    0,    0,     0,    0,     0,     0,    0,     0,    0,    0,    0,    0,    0,
+        0,    0,    0,    0,    0,     0,    0,     0,     0,    0,     0,    0,    0,    0,    0,    0,
+    };
+    const relevant_attention_mask = [_]i64{
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    };
+
+    // Time single inference
+    const start = std.time.nanoTimestamp();
+    const relevant_score = try session.infer(&relevant_input_ids, &relevant_attention_mask);
+    const end = std.time.nanoTimestamp();
+
+    const elapsed_ns = end - start;
+    const elapsed_us = @divFloor(elapsed_ns, 1_000);
+    const elapsed_ms = @as(f64, @floatFromInt(elapsed_us)) / 1000.0;
+
+    std.debug.print("\nRelevant pair score (pasta/pasta recipe): {d}\n", .{relevant_score});
+    std.debug.print("Single inference time: {d}μs ({d:.2}ms)\n", .{ elapsed_us, elapsed_ms });
+
+    // Second test pair: "how to make pasta" + "Machine learning is a subset of AI..."
+    // This should score low (irrelevant match)
+    const irrelevant_input_ids = [_]i64{
+        101,  2129, 2000, 2191, 24857, 102,  3698, 4083, 2003, 1037, 16745, 1997, 9932, 1012, 1012, 1012,
+        102,  0,    0,    0,    0,     0,    0,    0,    0,    0,    0,     0,    0,    0,    0,    0,
+        0,    0,    0,    0,    0,     0,    0,    0,    0,    0,    0,     0,    0,    0,    0,    0,
+        0,    0,    0,    0,    0,     0,    0,    0,    0,    0,    0,     0,    0,    0,    0,    0,
+        0,    0,    0,    0,    0,     0,    0,    0,    0,    0,    0,     0,    0,    0,    0,    0,
+        0,    0,    0,    0,    0,     0,    0,    0,    0,    0,    0,     0,    0,    0,    0,    0,
+        0,    0,    0,    0,    0,     0,    0,    0,    0,    0,    0,     0,    0,    0,    0,    0,
+        0,    0,    0,    0,    0,     0,    0,    0,    0,    0,    0,     0,    0,    0,    0,    0,
+    };
+    const irrelevant_attention_mask = [_]i64{
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    };
+
+    const irrelevant_score = try session.infer(&irrelevant_input_ids, &irrelevant_attention_mask);
+    std.debug.print("Irrelevant pair score (pasta/ML): {d}\n", .{irrelevant_score});
+
+    // Verify scores are valid and relevant pair scores higher than irrelevant
+    try std.testing.expect(!std.math.isNan(relevant_score));
+    try std.testing.expect(!std.math.isNan(irrelevant_score));
+    try std.testing.expect(relevant_score > irrelevant_score);
+}
+
+test "Baseline throughput: 100 sequential inferences" {
+    const allocator = std.testing.allocator;
+
+    var session = try ONNXSession.init(allocator, "models/minilm.onnx");
+    defer session.deinit();
+
+    // Use the same test input for all inferences (realistic scenario)
+    const input_ids = [_]i64{
+        101,  2129, 2000, 2191, 24857, 102,  24857, 17974, 1024, 26077, 2300, 1010, 5587, 5474, 1012, 1012,
+        1012, 102,  0,    0,    0,     0,    0,     0,     0,    0,     0,    0,    0,    0,    0,    0,
+        0,    0,    0,    0,    0,     0,    0,     0,     0,    0,     0,    0,    0,    0,    0,    0,
+        0,    0,    0,    0,    0,     0,    0,     0,     0,    0,     0,    0,    0,    0,    0,    0,
+        0,    0,    0,    0,    0,     0,    0,     0,     0,    0,     0,    0,    0,    0,    0,    0,
+        0,    0,    0,    0,    0,     0,    0,     0,     0,    0,     0,    0,    0,    0,    0,    0,
+        0,    0,    0,    0,    0,     0,    0,     0,     0,    0,     0,    0,    0,    0,    0,    0,
+        0,    0,    0,    0,    0,     0,    0,     0,     0,    0,     0,    0,    0,    0,    0,    0,
+    };
+    const attention_mask = [_]i64{
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    };
+
+    const num_inferences: usize = 100;
+    const start = std.time.nanoTimestamp();
+
+    var i: usize = 0;
+    while (i < num_inferences) : (i += 1) {
+        _ = try session.infer(&input_ids, &attention_mask);
+    }
+
+    const end = std.time.nanoTimestamp();
+    const elapsed_ns = end - start;
+    const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
+    const per_inference_ms = elapsed_ms / @as(f64, @floatFromInt(num_inferences));
+    const throughput = @as(f64, @floatFromInt(num_inferences)) / (elapsed_ms / 1000.0);
+
+    std.debug.print("\n=== Baseline Throughput ===\n", .{});
+    std.debug.print("100 sequential inferences: {d:.2}ms total\n", .{elapsed_ms});
+    std.debug.print("Per-inference: {d:.2}ms\n", .{per_inference_ms});
+    std.debug.print("Throughput: {d:.1} inferences/sec\n", .{throughput});
+    std.debug.print("Projected time for 1000 docs: {d:.0}ms\n", .{per_inference_ms * 1000.0});
+    std.debug.print("\nTarget: 50-100ms for 1000 docs (need {d:.0}x speedup)\n", .{(per_inference_ms * 1000.0) / 75.0});
 }

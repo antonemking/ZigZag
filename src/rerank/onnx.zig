@@ -58,15 +58,30 @@ pub const ONNXSession = struct {
         // Set USE_GPU=1 environment variable to enable GPU
         const use_gpu = std.process.hasEnvVarConstant("USE_GPU");
         if (use_gpu) {
-            // Attempt to append CUDA execution provider
-            // This requires onnxruntime-gpu package to be installed
-            status = api.*.SessionOptionsAppendExecutionProvider_CUDA_V2.?(session_options, null);
-            if (status != null) {
-                api.*.ReleaseStatus.?(status);
-                std.debug.print("Warning: CUDA GPU not available, falling back to CPU\n", .{});
+            std.debug.print("Attempting to enable CUDA GPU...\n", .{});
+
+            // Check if CUDA provider function exists
+            if (api.*.SessionOptionsAppendExecutionProvider_CUDA_V2 == null) {
+                std.debug.print("CUDA provider not available in this build, using CPU\n", .{});
             } else {
-                std.debug.print("Using CUDA GPU acceleration\n", .{});
+                // Attempt to append CUDA execution provider
+                status = api.*.SessionOptionsAppendExecutionProvider_CUDA_V2.?(session_options, null);
+                if (status != null) {
+                    // Get error message if possible
+                    const error_msg = if (api.*.GetErrorMessage) |getMsg| getMsg.?(status) else null;
+                    if (error_msg) |msg| {
+                        std.debug.print("CUDA initialization failed: {s}\n", .{msg});
+                    } else {
+                        std.debug.print("CUDA initialization failed (no error message)\n", .{});
+                    }
+                    api.*.ReleaseStatus.?(status);
+                    std.debug.print("Falling back to CPU execution\n", .{});
+                } else {
+                    std.debug.print("✅ Using CUDA GPU acceleration\n", .{});
+                }
             }
+        } else {
+            std.debug.print("Using CPU execution (set USE_GPU=1 for GPU)\n", .{});
         }
 
         // Set CPU threading options (always set, used if GPU not available)

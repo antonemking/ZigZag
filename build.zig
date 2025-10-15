@@ -24,27 +24,16 @@ pub fn build(b: *std.Build) void {
         defer b.allocator.free(include_path);
         exe.addIncludePath(.{ .cwd_relative = include_path });
     } else {
-        // Default paths for different platforms
-        if (std.process.hasEnvVarConstant("COLAB_GPU")) {
-            // Google Colab with pip-installed onnxruntime-gpu
-            exe.addIncludePath(.{ .cwd_relative = "/usr/local/lib/python3.10/dist-packages/onnxruntime/capi/include" });
-        } else {
-            // Mac Homebrew default
-            exe.addIncludePath(.{ .cwd_relative = "/opt/homebrew/Cellar/onnxruntime/1.22.2_4/include" });
-        }
+        // Default: Mac Homebrew
+        exe.addIncludePath(.{ .cwd_relative = "/opt/homebrew/Cellar/onnxruntime/1.22.2_4/include" });
     }
 
     if (onnx_lib) |lib_path| {
         defer b.allocator.free(lib_path);
         exe.addLibraryPath(.{ .cwd_relative = lib_path });
     } else {
-        if (std.process.hasEnvVarConstant("COLAB_GPU")) {
-            // Google Colab with pip-installed onnxruntime-gpu
-            exe.addLibraryPath(.{ .cwd_relative = "/usr/local/lib/python3.10/dist-packages/onnxruntime/capi/lib" });
-        } else {
-            // Mac Homebrew default
-            exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/onnxruntime/1.22.2_4/lib" });
-        }
+        // Default: Mac Homebrew
+        exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/onnxruntime/1.22.2_4/lib" });
     }
 
     b.installArtifact(exe);
@@ -73,22 +62,16 @@ pub fn build(b: *std.Build) void {
         defer b.allocator.free(include_path);
         unit_tests.addIncludePath(.{ .cwd_relative = include_path });
     } else {
-        if (std.process.hasEnvVarConstant("COLAB_GPU")) {
-            unit_tests.addIncludePath(.{ .cwd_relative = "/usr/local/lib/python3.10/dist-packages/onnxruntime/capi/include" });
-        } else {
-            unit_tests.addIncludePath(.{ .cwd_relative = "/opt/homebrew/Cellar/onnxruntime/1.22.2_4/include" });
-        }
+        // Default: Mac Homebrew
+        unit_tests.addIncludePath(.{ .cwd_relative = "/opt/homebrew/Cellar/onnxruntime/1.22.2_4/include" });
     }
 
     if (test_onnx_lib) |lib_path| {
         defer b.allocator.free(lib_path);
         unit_tests.addLibraryPath(.{ .cwd_relative = lib_path });
     } else {
-        if (std.process.hasEnvVarConstant("COLAB_GPU")) {
-            unit_tests.addLibraryPath(.{ .cwd_relative = "/usr/local/lib/python3.10/dist-packages/onnxruntime/capi/lib" });
-        } else {
-            unit_tests.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/onnxruntime/1.22.2_4/lib" });
-        }
+        // Default: Mac Homebrew
+        unit_tests.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/onnxruntime/1.22.2_4/lib" });
     }
 
     const run_unit_tests = b.addRunArtifact(unit_tests);

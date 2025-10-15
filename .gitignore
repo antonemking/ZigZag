@@ -8,10 +8,11 @@ zig-out/
 main
 zigzag
 
-# Model files (too large for git)
-models/*.onnx
+# Model files (included: minilm.onnx for testing)
+# Ignore other large model files
 models/*.safetensors
 models/*.bin
+models/*-quantized.onnx
 
 # Tokenizer testing scripts (not part of main repo)
 tokenizer_example/

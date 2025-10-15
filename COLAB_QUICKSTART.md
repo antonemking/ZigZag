@@ -10,6 +10,11 @@ Copy these cells directly into Google Colab (with GPU enabled).
 git clone https://github.com/antonemking/ZigZag.git
 cd ZigZag
 bash setup_colab.sh
+
+# If setup script fails, manually set paths:
+# python3 -c "import onnxruntime as ort; import os; print(os.path.dirname(ort.__file__))"
+# Then: export ONNX_INCLUDE=/path/to/onnxruntime/capi/include
+#       export ONNX_LIB=/path/to/onnxruntime/capi/lib
 ```
 
 ## Cell 2: Download Model

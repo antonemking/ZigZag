@@ -32,6 +32,24 @@ echo "Locating ONNX Runtime..."
 ONNX_PATH=$(python3 -c "import onnxruntime as ort; import os; print(os.path.dirname(ort.__file__))")
 echo "ONNX Runtime path: $ONNX_PATH"
 
+# Verify paths exist
+if [ ! -d "$ONNX_PATH/capi/include" ]; then
+    echo "ERROR: ONNX Runtime include path not found: $ONNX_PATH/capi/include"
+    exit 1
+fi
+
+if [ ! -d "$ONNX_PATH/capi/lib" ]; then
+    echo "ERROR: ONNX Runtime lib path not found: $ONNX_PATH/capi/lib"
+    exit 1
+fi
+
+# Check for libonnxruntime.so
+if [ ! -f "$ONNX_PATH/capi/lib/libonnxruntime.so" ] && [ ! -f "$ONNX_PATH/capi/lib/libonnxruntime.so.1" ]; then
+    echo "ERROR: libonnxruntime.so not found in $ONNX_PATH/capi/lib"
+    ls -la "$ONNX_PATH/capi/lib/" || echo "Directory doesn't exist"
+    exit 1
+fi
+
 # 5. Verify CUDA provider
 echo "Verifying CUDA provider..."
 python3 -c "import onnxruntime as ort; providers = ort.get_available_providers(); print(f'Available: {providers}'); assert 'CUDAExecutionProvider' in providers, 'CUDA not available!'"

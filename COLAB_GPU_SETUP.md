@@ -12,6 +12,26 @@ ZigZag requires GPU acceleration for real-time performance. CPU inference is ~12
 
 ## Google Colab Setup
 
+### Quick Setup (Recommended)
+
+```bash
+# Clone ZigZag
+!git clone https://github.com/antonemking/ZigZag.git
+%cd ZigZag
+
+# Run setup script (installs everything)
+!bash setup_colab.sh
+
+# Download model
+!mkdir -p models
+!wget https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2/resolve/main/model.onnx -O models/minilm.onnx
+
+# Build and test
+!source /tmp/zigzag_env.sh && zig build test
+```
+
+### Manual Setup (if script fails)
+
 ### 1. Enable GPU Runtime
 
 - Runtime → Change runtime type → Hardware accelerator → **GPU** (T4 or better)
@@ -29,10 +49,11 @@ ZigZag requires GPU acceleration for real-time performance. CPU inference is ~12
 # Install ONNX Runtime GPU
 !pip install onnxruntime-gpu
 
-# Find onnxruntime install path
+# Verify CUDA is available
 import onnxruntime as ort
 print(f"ONNX Runtime version: {ort.__version__}")
 print(f"Available providers: {ort.get_available_providers()}")
+# Should show: ['CUDAExecutionProvider', 'CPUExecutionProvider']
 ```
 
 ### 3. Clone and Build ZigZag
@@ -41,8 +62,30 @@ print(f"Available providers: {ort.get_available_providers()}")
 !git clone https://github.com/antonemking/ZigZag.git
 %cd ZigZag
 
-# Update build.zig to point to ONNX Runtime GPU installation
-# (You'll need to find the correct paths from pip install above)
+# Find ONNX Runtime paths (run in Python cell)
+import onnxruntime as ort
+import os
+ort_path = os.path.dirname(ort.__file__)
+print(f"ONNX Runtime path: {ort_path}")
+print(f"Include: {ort_path}/capi/include")
+print(f"Lib: {ort_path}/capi/lib")
+
+# Set environment variables for build (run in bash cell)
+export COLAB_GPU=1
+export USE_GPU=1
+export LD_LIBRARY_PATH=/usr/local/lib/python3.10/dist-packages/onnxruntime/capi/lib:$LD_LIBRARY_PATH
+```
+
+If the default Colab paths don't work, manually set paths:
+
+```bash
+# Find the actual paths first
+!python3 -c "import onnxruntime as ort; import os; print(os.path.dirname(ort.__file__))"
+
+# Then set environment variables with the correct paths
+export ONNX_INCLUDE=/usr/local/lib/python3.10/dist-packages/onnxruntime/capi/include
+export ONNX_LIB=/usr/local/lib/python3.10/dist-packages/onnxruntime/capi/lib
+export LD_LIBRARY_PATH=$ONNX_LIB:$LD_LIBRARY_PATH
 ```
 
 ### 4. Download Model
@@ -52,11 +95,23 @@ print(f"Available providers: {ort.get_available_providers()}")
 !wget https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2/resolve/main/model.onnx -O models/minilm.onnx
 ```
 
-### 5. Run with GPU
+### 5. Build and Run with GPU
 
 ```bash
-# Enable GPU via environment variable
-!USE_GPU=1 zig build test
+# Build ZigZag
+!COLAB_GPU=1 zig build
+
+# Run tests with GPU enabled
+!USE_GPU=1 COLAB_GPU=1 LD_LIBRARY_PATH=/usr/local/lib/python3.10/dist-packages/onnxruntime/capi/lib:$LD_LIBRARY_PATH zig build test
+```
+
+You should see output like:
+```
+Using CUDA GPU acceleration
+=== Batch Inference Performance (batch_size=32) ===
+Batched:    10-50ms total (0.3-1.5ms per inference)
+Sequential: 200-500ms total (6-15ms per inference)
+Speedup:    10-50x faster
 ```
 
 ## Expected GPU Performance
